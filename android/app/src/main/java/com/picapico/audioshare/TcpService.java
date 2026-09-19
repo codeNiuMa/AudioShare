@@ -45,8 +45,6 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.Timer;
 import java.util.TimerTask;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 public class TcpService extends NotificationService {
     private static final String TAG = "AudioShareService";
@@ -62,9 +60,7 @@ public class TcpService extends NotificationService {
     private OutputStream mSocketOutputStream = null;
     private int maxAudioVolume = 15;
 
-    private boolean isWriting = false;
     private WakeLockManager mWakeLockManager;
-    private final ExecutorService mExecutorService = Executors.newSingleThreadExecutor();
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private HttpServer httpServer;
     private SharedPreferences mSharedPreferences;
@@ -443,7 +439,6 @@ public class TcpService extends NotificationService {
             outputStream.flush();
             mSocketOutputStream = outputStream;
             DataInputStream stream = new DataInputStream(inputStream);
-            setWriting(false);
             while (true) {
                 try {
                     stream.readFully(buffer, 0, 4);
@@ -459,31 +454,22 @@ public class TcpService extends NotificationService {
                 } catch (Exception e){
                     break;
                 }
-                if(getWriting()) {
-                    Log.w(TAG, "write audio busy");
-                    continue;
-                }
-
                 if(httpServer != null && httpServer.getAudioPlayer().isPlaying()) {
                     Log.w(TAG, "write audio playing");
                     continue;
                 }
-                byte[] finalBuffer = buffer;
-                int finalDataLength = dataLength;
-                setWriting(true);
-                mExecutorService.execute(() -> {
-                    int code = mAudioTrack.write(finalBuffer, 0, finalDataLength);
-                    mAudioTrack.flush();
-                    mHandler.post(() -> setWriting(false));
-                    if(code < 0) {
-                        Log.e(TAG, "write audio data err: " + code);
+                int written = 0;
+                while (written < dataLength) {
+                    int code = mAudioTrack.write(buffer, written, dataLength - written);
+                    if(code <= 0) {
+                        throw new IOException("write audio data err: " + code);
                     }
-                    int state = mAudioTrack.getPlayState();
-                    if(state != AudioTrack.PLAYSTATE_PLAYING) {
-                        Log.w(TAG, "write audio state: " + state);
-//                        mAudioTrack.play();
-                    }
-                });
+                    written += code;
+                }
+                int state = mAudioTrack.getPlayState();
+                if(state != AudioTrack.PLAYSTATE_PLAYING) {
+                    Log.w(TAG, "write audio state: " + state);
+                }
             }
         } catch (Exception e) {
             Log.e(TAG, "play audio error: " + e);
@@ -571,14 +557,6 @@ public class TcpService extends NotificationService {
             startForeground(NOTIFICATION_ID, mNotification);
         }
     }
-    private synchronized void setWriting(boolean writing) {
-        isWriting = writing;
-    }
-
-    public synchronized boolean getWriting() {
-        return isWriting;
-    }
-
     private void startBroadcastTimer(){
         Timer timer = new Timer();
         timer.schedule(new TimerTask() {
