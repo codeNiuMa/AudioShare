@@ -35,7 +35,7 @@ jobs:
         run: |
           cd musiche/web
           yarn
-          yarn build
+          yarn build:nc
           cd ..\..
           copy musiche\web\dist android\app\src\main\assets -Recurse
           cd windows

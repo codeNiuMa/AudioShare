@@ -10,8 +10,8 @@ android {
         applicationId "com.picapico.audioshare"
         minSdk 21
         targetSdk 34
-        versionCode 181
-        versionName "1.7.11"
+        versionCode 182
+        versionName "1.7.12"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         multiDexEnabled true
