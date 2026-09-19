@@ -70,6 +70,7 @@ namespace AudioShare
                 {
                     _udpListener = new UdpClient(i);
                     _udpListener.EnableBroadcast = true;
+                    break;
                 }
                 catch (Exception)
                 {
@@ -78,8 +79,17 @@ namespace AudioShare
             if (_udpListener == null) return;
             while (true)
             {
-                await Task.Delay(1000);
-                UdpReceiveResult result = await _udpListener.ReceiveAsync();
+                UdpReceiveResult result;
+                try
+                {
+                    result = await _udpListener.ReceiveAsync();
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error("receive discovery message error: " + ex.Message);
+                    await Task.Delay(1000);
+                    continue;
+                }
                 if (result.Buffer.Length > 26) continue;
                 string message = Encoding.UTF8.GetString(result.Buffer);
                 Logger.Info("Received message " + result.RemoteEndPoint.Address.ToString());
@@ -525,11 +535,6 @@ namespace AudioShare
                 if (sender != null && sender is Speaker)
                 {
                     ((Speaker)sender)?.SetVolume(Volume);
-                }
-                List<Speaker> allConnected = Speakers.Where(speaker => speaker.Connected).ToList();
-                foreach (var speaker in allConnected)
-                {
-                    if (speaker.Connected) speaker.SyncTime();
                 }
                 ResetSpeakerSetting();
                 _settings.Save();

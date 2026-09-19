@@ -2,6 +2,7 @@
 using NAudio.Wave;
 using SharpAdbClient;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -11,6 +12,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
@@ -25,7 +27,6 @@ namespace AudioShare
             None = 0,
             AudioData = 1,
             Volume = 2,
-            SyncTime = 3,
             Stop = 4
         }
         public event PropertyChangedEventHandler PropertyChanged;
@@ -146,11 +147,6 @@ namespace AudioShare
             _ = RequestTcp(Command.Volume, volumeBytes);
         }
 
-        public void SyncTime()
-        {
-            _ = RequestTcp(Command.SyncTime);
-        }
-
         public void Dispose()
         {
             _disposed = true;
@@ -221,13 +217,19 @@ namespace AudioShare
                 if (tcpClient.Connected)
                 {
                     Logger.Info("connect send head");
-                    await WriteTcp(TCP_HEAD);
-                    await WriteTcp(new byte[] { (byte)Command.AudioData });
                     var sampleRateBytes = BitConverter.GetBytes(AudioManager.SampleRate);
-                    await WriteTcp(sampleRateBytes);
                     var channelBytes = BitConverter.GetBytes(_channel == AudioChannel.Stereo ? 12 : 4);
-                    await WriteTcp(channelBytes);
+                    var handshake = new byte[TCP_HEAD.Length + 1 + sampleRateBytes.Length + channelBytes.Length];
+                    int offset = 0;
+                    Buffer.BlockCopy(TCP_HEAD, 0, handshake, offset, TCP_HEAD.Length);
+                    offset += TCP_HEAD.Length;
+                    handshake[offset++] = (byte)Command.AudioData;
+                    Buffer.BlockCopy(sampleRateBytes, 0, handshake, offset, sampleRateBytes.Length);
+                    offset += sampleRateBytes.Length;
+                    Buffer.BlockCopy(channelBytes, 0, handshake, offset, channelBytes.Length);
+                    if (!await WriteTcp(handshake)) throw new IOException("write audio handshake failed");
                     await tcpClient.GetStream().ReadAsync(new byte[1], 0, 1);
+                    StartAudioSender();
                     _ = _dispatcher.InvokeAsync(() =>
                     {
                         AudioManager.StartCapture();
@@ -278,30 +280,98 @@ namespace AudioShare
             _ = DisConnect();
         }
 
-        private readonly object writeLock = new object();
-        private bool isBusy = false;
-        private async void SendAudioData(object sender, WaveInEventArgs e)
+        private const int MaxQueuedAudioPackets = 4;
+        private sealed class AudioSendState
         {
-            lock (writeLock)
+            public readonly ConcurrentQueue<byte[]> Queue = new ConcurrentQueue<byte[]>();
+            public readonly SemaphoreSlim Signal = new SemaphoreSlim(0);
+            public readonly CancellationTokenSource Cancellation = new CancellationTokenSource();
+            public readonly TcpClient Client;
+            public int Count;
+
+            public AudioSendState(TcpClient client)
             {
-                if (isBusy) return;
-                isBusy = true;
+                Client = client;
             }
-            if (!(await WriteTcp(e.Buffer, e.BytesRecorded, true)))
+        }
+
+        private AudioSendState _audioSendState;
+
+        private void StartAudioSender()
+        {
+            StopAudioSender();
+            var state = new AudioSendState(tcpClient);
+            Interlocked.Exchange(ref _audioSendState, state);
+            _ = Task.Run(() => SendAudioQueue(state));
+        }
+
+        private void StopAudioSender()
+        {
+            var state = Interlocked.Exchange(ref _audioSendState, null);
+            if (state == null) return;
+            state.Cancellation.Cancel();
+            while (state.Queue.TryDequeue(out _))
             {
-                if (!_retried && Connected)
+                Interlocked.Decrement(ref state.Count);
+            }
+        }
+
+        private void SendAudioData(object sender, WaveInEventArgs e)
+        {
+            if (e.BytesRecorded <= 0) return;
+            var state = Volatile.Read(ref _audioSendState);
+            if (state == null || state.Cancellation.IsCancellationRequested) return;
+
+            var packet = new byte[e.BytesRecorded];
+            Buffer.BlockCopy(e.Buffer, 0, packet, 0, e.BytesRecorded);
+            state.Queue.Enqueue(packet);
+            int count = Interlocked.Increment(ref state.Count);
+            bool shouldSignal = true;
+            while (count > MaxQueuedAudioPackets && state.Queue.TryDequeue(out _))
+            {
+                count = Interlocked.Decrement(ref state.Count);
+                shouldSignal = false;
+            }
+            if (shouldSignal) state.Signal.Release();
+        }
+
+        private async Task SendAudioQueue(AudioSendState state)
+        {
+            bool writeFailed = false;
+            try
+            {
+                while (!state.Cancellation.IsCancellationRequested)
                 {
-                    _retried = true;
-                    await Connect(true);
-                }
-                else
-                {
-                    await DisConnect(true);
+                    await state.Signal.WaitAsync(state.Cancellation.Token);
+                    if (!state.Queue.TryDequeue(out byte[] packet)) continue;
+                    Interlocked.Decrement(ref state.Count);
+                    if (!await WriteTcp(packet, packet.Length, true, state.Client, state.Cancellation.Token))
+                    {
+                        writeFailed = true;
+                        break;
+                    }
                 }
             }
-            lock (writeLock)
+            catch (OperationCanceledException)
             {
-                isBusy = false;
+            }
+            finally
+            {
+                while (state.Queue.TryDequeue(out _))
+                {
+                    Interlocked.Decrement(ref state.Count);
+                }
+            }
+
+            if (!writeFailed || !ReferenceEquals(state, Volatile.Read(ref _audioSendState))) return;
+            if (!_retried && Connected)
+            {
+                _retried = true;
+                await Connect(true);
+            }
+            else
+            {
+                await DisConnect(true);
             }
         }
 
@@ -390,6 +460,7 @@ namespace AudioShare
             if (_connectStatus == ConnectStatus.UnConnected) return;
             SetConnectStatus(ConnectStatus.UnConnected, toast);
             Logger.Info("disconnect start");
+            StopAudioSender();
             if (!retry)
             {
                 _remoteIP = string.Empty;
@@ -460,44 +531,58 @@ namespace AudioShare
 
         private long _lastSendTime = 0;
         private static readonly byte[] _heartBeatBytes = new byte[] { 0x00, 0x00, 0x00, 0x00 };
+        private readonly SemaphoreSlim _tcpWriteLock = new SemaphoreSlim(1, 1);
         public void SendHeartbeat()
         {
             _dispatcher.Invoke(async () =>
             {
                 if(DateTimeOffset.UtcNow.ToUnixTimeSeconds() - _lastSendTime > 5)
                 {
-                    if(!await WriteTcp(_heartBeatBytes)) {
+                    var client = tcpClient;
+                    if(!await WriteTcp(_heartBeatBytes, expectedClient: client)) {
                         _ = DisConnect();
                     }
                 }
             });
         }
-        private async Task<bool> WriteTcp(byte[] buffer, int length = 0, bool sendLength = false)
+        private async Task<bool> WriteTcp(byte[] buffer, int length = 0, bool sendLength = false,
+            TcpClient expectedClient = null, CancellationToken cancellationToken = default(CancellationToken))
         {
             if (length == 0) length = buffer.Length;
             if (length == 0) return true;
-            _lastSendTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            bool lockTaken = false;
             try
             {
-                if (tcpClient != null)
+                await _tcpWriteLock.WaitAsync(cancellationToken);
+                lockTaken = true;
+                var client = tcpClient;
+                if (client != null && (expectedClient == null || ReferenceEquals(client, expectedClient)))
                 {
+                    _lastSendTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                     if (sendLength)
                     {
                         var dataLength = BitConverter.GetBytes(length);
-                        await tcpClient.GetStream().WriteAsync(dataLength, 0, dataLength.Length);
+                        await client.GetStream().WriteAsync(dataLength, 0, dataLength.Length);
                     }
-                    await tcpClient.GetStream().WriteAsync(buffer, 0, length);
-                    await tcpClient.GetStream().FlushAsync();
-                    if (length > tcpClient.SendBufferSize)
+                    await client.GetStream().WriteAsync(buffer, 0, length);
+                    await client.GetStream().FlushAsync();
+                    if (length > client.SendBufferSize)
                     {
-                        tcpClient.SendBufferSize = length;
+                        client.SendBufferSize = length;
                     }
                     return true;
                 }
             }
+            catch (OperationCanceledException)
+            {
+            }
             catch (Exception ex)
             {
                 Logger.Error("write tcp error: " + ex.Message);
+            }
+            finally
+            {
+                if (lockTaken) _tcpWriteLock.Release();
             }
             return false;
         }

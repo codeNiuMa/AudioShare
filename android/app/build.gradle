@@ -10,8 +10,8 @@ android {
         applicationId "com.picapico.audioshare"
         minSdk 21
         targetSdk 34
-        versionCode 183
-        versionName "1.7.13"
+        versionCode 184
+        versionName "1.7.14"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         ndk {

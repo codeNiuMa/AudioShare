@@ -54,6 +54,7 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onServiceDisconnected(ComponentName arg0) {
             isBound = false;
+            tcpService = null;
         }
     };
 
@@ -74,10 +75,14 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (tcpService != null) {
+            tcpService.setMessageListener(null);
+        }
         if (isBound) {
             unbindService(connection);
             isBound = false;
         }
+        tcpService = null;
     }
     @SuppressLint("SetTextI18n")
     private void setVersionName(){

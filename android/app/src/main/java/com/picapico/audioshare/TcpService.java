@@ -52,6 +52,7 @@ public class TcpService extends Service {
 
     private WakeLockManager mWakeLockManager;
     private final Handler mHandler = new Handler(Looper.getMainLooper());
+    private Timer broadcastTimer;
 
     @Override
     public void onCreate() {
@@ -77,9 +78,24 @@ public class TcpService extends Service {
 
     @Override
     public void onDestroy() {
-        super.onDestroy();
+        if (broadcastTimer != null) {
+            broadcastTimer.cancel();
+            broadcastTimer.purge();
+            broadcastTimer = null;
+        }
+        setMessageListener(null);
+        Closeable closer = getPlayerCloser();
+        setPlayerCloser(null);
+        if (closer != null) {
+            try {
+                closer.close();
+            } catch (IOException ignored) {
+            }
+        }
         stopForeground(true);
         stopAudio();
+        stopSocketOutputStream();
+        mWakeLockManager.releaseWakeLock();
         Log.i(TAG, "Service on destroy");
         try {
             if(localServerSocket != null){
@@ -97,6 +113,7 @@ public class TcpService extends Service {
         } catch (IOException e) {
             Log.e(TAG, "close tcp server error: " + e);
         }
+        super.onDestroy();
     }
 
     private byte readHead(InputStream stream) throws IOException {
@@ -402,6 +419,7 @@ public class TcpService extends Service {
         stopAudio();
         stopSocketOutputStream();
         mWakeLockManager.releaseWakeLock();
+        setPlayerCloser(null);
         setPlaying(false);
         if(mListener != null){
             mListener.onMessage();
@@ -465,9 +483,12 @@ public class TcpService extends Service {
                 .build();
         startForeground(NOTIFICATION_ID, mNotification);
     }
-    private void startBroadcastTimer(){
-        Timer timer = new Timer();
-        timer.schedule(new TimerTask() {
+    private synchronized void startBroadcastTimer(){
+        if (broadcastTimer != null) {
+            broadcastTimer.cancel();
+        }
+        broadcastTimer = new Timer("AudioShareBroadcast", true);
+        broadcastTimer.schedule(new TimerTask() {
             @Override
             public void run() {
                 if (getPlaying()) {
