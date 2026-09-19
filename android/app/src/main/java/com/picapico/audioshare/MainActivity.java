@@ -1,6 +1,5 @@
 package com.picapico.audioshare;
 
-import android.Manifest;
 import android.annotation.SuppressLint;
 import android.content.ComponentName;
 import android.content.Context;
@@ -11,7 +10,6 @@ import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.media.AudioManager;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -19,12 +17,11 @@ import android.util.Log;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
-import android.widget.CompoundButton;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.SwitchCompat;
-import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 import java.net.Inet6Address;
 import java.net.InetAddress;
@@ -35,9 +32,6 @@ public class MainActivity extends AppCompatActivity {
     private TcpService tcpService = null;
     private boolean isBound = false;
     private TextView ipAddress;
-    private SwitchCompat managerSwitch;
-    private TextView managerText;
-    private String versionName;
     private SwitchCompat connectionSwitch;
     private TextView connectionText;
     private final TcpService.MessageListener messageListener = () -> {
@@ -51,7 +45,6 @@ public class MainActivity extends AppCompatActivity {
             TcpService.TcpBinder binder = (TcpService.TcpBinder) service;
             tcpService = binder.getService();
             tcpService.setAudioManager((AudioManager) getSystemService(Context.AUDIO_SERVICE));
-            tcpService.setVersionName(versionName);
             tcpService.setMessageListener(messageListener);
             isBound = true;
             setConnectionStatus();
@@ -71,36 +64,11 @@ public class MainActivity extends AppCompatActivity {
         setStatusBarTransparent();
         setVersionName();
         ipAddress = findViewById(R.id.ipAddress);
-        managerSwitch = findViewById(R.id.managerSwitch);
-        managerText = findViewById(R.id.managerText);
         connectionSwitch = findViewById(R.id.connectionSwitch);
         connectionText = findViewById(R.id.connectionText);
         Intent intent = new Intent(this, TcpService.class);
-        startService(intent);
+        ContextCompat.startForegroundService(this, intent);
         bindService(intent, connection, Context.BIND_AUTO_CREATE);
-        managerText.setOnClickListener(this::onManagerClick);
-        findViewById(R.id.imageView).setOnClickListener(this::onManagerClick);
-        ActivityCompat.requestPermissions(this, new String[]{
-                Manifest.permission.INTERNET,
-                Manifest.permission.ACCESS_NETWORK_STATE,
-                Manifest.permission.ACCESS_WIFI_STATE
-        }, 1);
-        managerSwitch.setOnClickListener(this::onHttpServerRunningChanged);
-    }
-
-    private void onHttpServerRunningChanged(View v) {
-        if(tcpService == null) return;
-        tcpService.setHttpRunning(managerSwitch.isChecked());
-    }
-
-    private void onManagerClick(View e){
-        try {
-            Uri uri = Uri.parse(managerText.getText().toString());
-            if(uri.isAbsolute()){
-                Intent intent = new Intent(Intent.ACTION_VIEW, uri);
-                startActivity(intent);
-            }
-        }catch (Exception ignore){}
     }
 
     @Override
@@ -119,7 +87,6 @@ public class MainActivity extends AppCompatActivity {
             PackageInfo packageInfo = packageManager.getPackageInfo(packageName, 0);
             TextView versionName = findViewById(R.id.versionName);
             versionName.setText(packageInfo.versionName+"\n\n");
-            this.versionName = packageInfo.versionName;
         } catch (PackageManager.NameNotFoundException e) {
             Log.e(TAG, "set version error: " + e);
         }
@@ -139,37 +106,20 @@ public class MainActivity extends AppCompatActivity {
         if(tcpService == null) return;
         runOnUiThread(() -> {
             int port = tcpService.getListenPort();
-            int httpPort = tcpService.getHttpPort();
             StringBuilder sb = new StringBuilder();
             List<InetAddress> ips = NetworkUtils.getAllInetAddress();
-            String ipv4 = "";
             if(ips.isEmpty()){
-                ipv4 = NetworkUtils.getIpAddress(this);
-                sb.append(ipv4).append(":").append(port).append("\n");
+                sb.append(NetworkUtils.getIpAddress(this)).append(":").append(port).append("\n");
             }else {
                 for (InetAddress ip: ips) {
                     String address = ip.getHostAddress();
                     if(ip instanceof Inet6Address) {
                         address = "[" + address + "]";
-                    }else {
-                        ipv4 = address;
                     }
                     sb.append(address).append(":").append(port).append("\n");
                 }
             }
             ipAddress.setText(sb.toString().trim());
-            if(ipv4 == null || ipv4.isEmpty()) ipv4 = "127.0.0.1";
-            String httpAddress = "http://" + ipv4;
-            if(httpPort != 80){
-                httpAddress += ":" + httpPort;
-            }
-            if(tcpService.getHttpRunning()){
-                managerText.setText(httpAddress);
-                managerSwitch.setChecked(true);
-            }else {
-                managerText.setText(R.string.musiche_closed);
-                managerSwitch.setChecked(false);
-            }
         });
     }
 

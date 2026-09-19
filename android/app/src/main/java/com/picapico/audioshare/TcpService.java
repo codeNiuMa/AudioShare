@@ -1,14 +1,11 @@
 package com.picapico.audioshare;
 
-import android.annotation.SuppressLint;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
-import android.content.Context;
+import android.app.Service;
 import android.content.Intent;
-import android.content.SharedPreferences;
-import android.content.pm.PackageManager;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioManager;
@@ -21,17 +18,10 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
-import androidx.core.content.ContextCompat;
-
-import com.phicomm.speaker.player.light.PlayerVisualizer;
-import com.picapico.audioshare.musiche.player.AudioPlayer;
-import com.picapico.audioshare.musiche.HttpServer;
-import com.picapico.audioshare.musiche.notification.NotificationService;
 
 import java.io.Closeable;
 import java.io.DataInputStream;
@@ -46,7 +36,7 @@ import java.net.Socket;
 import java.util.Timer;
 import java.util.TimerTask;
 
-public class TcpService extends NotificationService {
+public class TcpService extends Service {
     private static final String TAG = "AudioShareService";
     private static final String HEAD = "picapico-audio-share";
     public  static final String CHANNEL_ID = "com.picapico.audio_share";
@@ -62,19 +52,15 @@ public class TcpService extends NotificationService {
 
     private WakeLockManager mWakeLockManager;
     private final Handler mHandler = new Handler(Looper.getMainLooper());
-    private HttpServer httpServer;
-    private SharedPreferences mSharedPreferences;
+
     @Override
     public void onCreate() {
         super.onCreate();
         mWakeLockManager = new WakeLockManager(this);
         Log.i(TAG, "Service on created");
+        initNotification();
         new Thread(this::startLocalServer).start();
         new Thread(this::startServer).start();
-        mSharedPreferences = getSharedPreferences("app", Context.MODE_PRIVATE);
-        if(mSharedPreferences.getBoolean("http-server", true)){
-            this.startHttpServer();
-        }
         this.startBroadcastTimer();
     }
     @Override
@@ -111,7 +97,6 @@ public class TcpService extends NotificationService {
         } catch (IOException e) {
             Log.e(TAG, "close tcp server error: " + e);
         }
-        if(httpServer != null) httpServer.stop();
     }
 
     private byte readHead(InputStream stream) throws IOException {
@@ -155,8 +140,6 @@ public class TcpService extends NotificationService {
             } catch (IOException e) {
                 Log.e(TAG, "read volume error: " + e);
             }
-        }else if(command == 3) {
-            PlayerVisualizer.updateTimeMillis();
         }else if(command == 4) {
             if(getPlaying() && getPlayerCloser() != null){
                 try {
@@ -262,28 +245,6 @@ public class TcpService extends NotificationService {
             }
         }
     }
-    private void startHttpServer(){
-        if(httpServer != null) return;
-        Log.i(TAG, "prepare http start server");
-        int port = NetworkUtils.getFreePort(Build.MANUFACTURER.equalsIgnoreCase("phicomm") ? 8090 : 8080);
-        this.setHttpPort(port);
-        httpServer = new HttpServer(getApplicationContext(), port).start();
-        httpServer.getAudioPlayer().setMediaMetaChangedListener(new AudioPlayer.OnMediaMetaChangedListener() {
-            @Override
-            public void onMediaMetaChanged(boolean playing, int position) {
-                setMetaData(playing, position);
-            }
-
-            @Override
-            public void onMediaMetaChanged(String title, String artist, String album, String artwork, boolean lover, boolean playing, int position, int duration) {
-                setMetaData(title, artist, album, artwork, lover, playing, position, duration);
-            }
-        });
-        this.setMediaSessionCallback(httpServer.getAudioPlayer().getNotificationCallback());
-        httpServer.setSharedPreferences(getSharedPreferences("config", Context.MODE_PRIVATE));
-        httpServer.setAssetManager(getAssets());
-        httpServer.setVersionName(mVersionName);
-    }
     private void startServer(){
         Log.i(TAG, "prepare tcp start server");
         try {
@@ -351,41 +312,6 @@ public class TcpService extends NotificationService {
         return listenPort;
     }
 
-    private int httpPort = 8088;
-    private String mVersionName="";
-
-    private synchronized void setHttpPort(int httpPort) {
-        this.httpPort = httpPort;
-    }
-
-    public synchronized int getHttpPort() {
-        return httpPort;
-    }
-
-    public synchronized boolean getHttpRunning() {
-        return mSharedPreferences.getBoolean("http-server", true) && httpServer != null;
-    }
-
-    @SuppressLint("ApplySharedPref")
-    public synchronized void setHttpRunning(boolean running) {
-        if(running) {
-            mSharedPreferences.edit().putBoolean("http-server", true).apply();
-            startHttpServer();
-        }else {
-            String message = getResources().getString(R.string.musiche_closed) + ", " + getResources().getString(R.string.effective_after_restart);
-            Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
-            final Intent intent = getPackageManager().getLaunchIntentForPackage(getPackageName());
-            if(intent != null){
-                startActivity(intent);
-            }
-            mSharedPreferences.edit().putBoolean("http-server", false).commit();
-            android.os.Process.killProcess(android.os.Process.myPid());
-        }
-        if(mListener != null){
-            mListener.onMessage();
-        }
-    }
-
     public void setMessageListener(MessageListener listener){
         mListener = listener;
     }
@@ -393,11 +319,6 @@ public class TcpService extends NotificationService {
     public void setAudioManager(AudioManager audioManager){
         mAudioManager = audioManager;
         maxAudioVolume = mAudioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
-        if(httpServer != null) httpServer.setAudioManager(audioManager);
-    }
-    public void setVersionName(String versionName){
-        mVersionName = versionName;
-        if(httpServer != null) httpServer.setVersionName(versionName);
     }
 
     private void playAudio(int sampleRateInHz, int channelConfig, int audioEncoding, int bufferSizeInBytes, Closeable closer, InputStream inputStream, OutputStream outputStream){
@@ -408,7 +329,6 @@ public class TcpService extends NotificationService {
             mListener.onMessage();
         }
         try {
-            initNotification();
             mWakeLockManager.acquireWakeLock();
             AudioFormat audioFormat = new AudioFormat.Builder()
                     .setChannelMask(channelConfig)
@@ -422,7 +342,6 @@ public class TcpService extends NotificationService {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 audioAttributes.setFlags(AudioAttributes.FLAG_LOW_LATENCY);
             }
-            if(httpServer != null) httpServer.getAudioPlayer().pause();
             mAudioTrack = new AudioTrack(
                     audioAttributes.build(),
                     audioFormat,
@@ -433,7 +352,6 @@ public class TcpService extends NotificationService {
             byte[] buffer = new byte[bufferSizeInBytes];
             int dataLength;
             mAudioTrack.play();
-            PlayerVisualizer.startBase(mAudioTrack.getAudioSessionId());
             Log.i(TAG, "play audio ready to read");
             outputStream.write(new byte[1]);
             outputStream.flush();
@@ -454,10 +372,6 @@ public class TcpService extends NotificationService {
                 } catch (Exception e){
                     break;
                 }
-                if(httpServer != null && httpServer.getAudioPlayer().isPlaying()) {
-                    Log.w(TAG, "write audio playing");
-                    continue;
-                }
                 int written = 0;
                 while (written < dataLength) {
                     int code = mAudioTrack.write(buffer, written, dataLength - written);
@@ -474,7 +388,6 @@ public class TcpService extends NotificationService {
         } catch (Exception e) {
             Log.e(TAG, "play audio error: " + e);
         } finally {
-            PlayerVisualizer.stopBase();
             try {
                 inputStream.close();
             } catch (Exception e) {
@@ -488,7 +401,6 @@ public class TcpService extends NotificationService {
         }
         stopAudio();
         stopSocketOutputStream();
-        stopForeground(true);
         mWakeLockManager.releaseWakeLock();
         setPlaying(false);
         if(mListener != null){
@@ -538,10 +450,10 @@ public class TcpService extends NotificationService {
     private void initNotification(){
         createNotificationChannel();
         int flag = PendingIntent.FLAG_UPDATE_CURRENT;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            flag = PendingIntent.FLAG_IMMUTABLE;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            flag |= PendingIntent.FLAG_IMMUTABLE;
         }
-        Intent infoIntent = new Intent(this, BootReceiver.class);
+        Intent infoIntent = new Intent(this, MainActivity.class);
         PendingIntent pendingInfo = PendingIntent.getActivity(this, 0, infoIntent, flag);
         Notification mNotification = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentIntent(pendingInfo)
@@ -551,11 +463,7 @@ public class TcpService extends NotificationService {
                 .setContentTitle(getResources().getString(R.string.app_name))
                 .setContentText(getResources().getString(R.string.app_name))
                 .build();
-        if(ContextCompat.checkSelfPermission(
-                this, android.Manifest.permission.WAKE_LOCK) ==
-                PackageManager.PERMISSION_GRANTED) {
-            startForeground(NOTIFICATION_ID, mNotification);
-        }
+        startForeground(NOTIFICATION_ID, mNotification);
     }
     private void startBroadcastTimer(){
         Timer timer = new Timer();
@@ -578,7 +486,7 @@ public class TcpService extends NotificationService {
                 }
                 try (DatagramSocket socket = new DatagramSocket(0)) {
                     socket.setBroadcast(true);
-                    String message = HEAD + "@" + getListenPort() + "@" + getHttpPort();
+                    String message = HEAD + "@" + getListenPort();
                     byte[] data = message.getBytes();
                     for (int i = 58261; i < 58271; i++) {
                         socket.send(new DatagramPacket(data, data.length,

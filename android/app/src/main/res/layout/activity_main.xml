@@ -72,27 +72,4 @@
             android:clickable="false"
             android:gravity="center"/>
     </LinearLayout>
-    <LinearLayout
-        android:layout_width="0dp"
-        android:layout_height="25dp"
-        android:layout_marginStart="20dp"
-        android:layout_marginTop="35dp"
-        android:layout_marginEnd="20dp"
-        android:orientation="horizontal"
-        android:gravity="start"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toStartOf="@id/connection">
-        <androidx.appcompat.widget.SwitchCompat
-            android:layout_width="wrap_content"
-            android:layout_height="match_parent"
-            android:id="@+id/managerSwitch"
-            android:gravity="center"/>
-        <TextView
-            android:id="@+id/managerText"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:gravity="center" />
-    </LinearLayout>
-
 </androidx.constraintlayout.widget.ConstraintLayout>

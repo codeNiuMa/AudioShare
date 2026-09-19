@@ -9,7 +9,7 @@ import android.util.Log;
 import androidx.core.content.ContextCompat;
 
 public class WakeLockManager {
-    private static final String TAG = "AudioShareBootReceiver";
+    private static final String TAG = "AudioShareWakeLock";
     private PowerManager.WakeLock wakeLock = null;
     private final Context context;
     public WakeLockManager(Context context) {

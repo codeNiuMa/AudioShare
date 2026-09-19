@@ -11,8 +11,6 @@ AudioShare is an application that allows you to transfer real-time sound from yo
 + Real time transmission: Real time transmission of sound from Windows computers to Android devices with low latency and high sound quality.
 + Multi device support: Supports multiple Android devices to connect simultaneously, and can play different sounds according to different channels.
 + Two connection methods: supports USB data cable and Wi Fi network connection.
-+ Remote control: supports remote control of playing cloud music, using the Musiche project, and supports NetEase Cloud, QQ, and Migu music playback.
-+ Multi machine interconnection: supports synchronous playback of multiple devices during remote playback, which can be disabled or enabled in the settings interface.
 
 ## User Guide
 
@@ -32,32 +30,11 @@ AudioShare is an application that allows you to transfer real-time sound from yo
 ### Android Device
 
 1. If possible, you can manually install the app to an Android device (Windows will try to install it when unable to connect).
-2. If manually installed, you can open the app to view the remote management address and Windows remote connection address.
+2. If manually installed, you can open the app to view the Windows remote connection address.
 3. If you are using a USB connection, please wait for the application to automatically install.
 4. If you are using a Wi Fi connection, make sure that your Windows computer and Android device are connected to the same Wi Fi network.
 5. After a successful connection, you can hear the sound of your Windows computer on your Android device.
 ![image](./images/android.png)
-
-## Advanced
-
-### Phicomm R1 atmosphere light
-
-1. Authorize the app to obtain Android root privileges.
-2. It takes effect after restarting the app.
-3. Multiple devices can synchronize atmosphere lighting effect.
-
-### Remote control for playing cloud music
-
-1. Access the remote management address displayed in the upper left corner of the Android app interface, with a default port of 8080 (Phicomm R1 is 8090).
-2. Open the remote management page and select to log in to NetEase Cloud, QQ, or Migu Music accounts in the settings interface to view personal playlists.
-3. Detailed introduction can be found in [Musiche project](https://github.com/HeHang0/Musiche).
-
-### Multi interconnection
-
-1. Install the AudioShare app on multiple Android devices.
-2. After opening the AudioShare application on all devices, it will automatically discover local area network devices and connect them
-3. By default, it will automatically connect and synchronize playback. If you need to disable the multi machine interconnection function, you can turn it off in the settings interface.
-![image](./images/remote.png)
 
 ### Download
 
